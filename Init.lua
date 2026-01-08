@@ -1,7 +1,7 @@
 local pixels = {}
-local COLOR = require(script.Colors)
-local JPEG = require(script.JPEG)
-local PNG =  require(script.PNG)
+local COLOR = loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaconGamming/Image-Reader-Roblox/refs/heads/main/Colors.lua"))
+local JPEG = loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaconGamming/Image-Reader-Roblox/refs/heads/main/JPEG/Main.lua"))
+local PNG =  loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaconGamming/Image-Reader-Roblox/refs/heads/main/PNG.lua"))
 
 local RUN_SERVICE = game:GetService("RunService")
 
