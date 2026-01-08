@@ -1,7 +1,7 @@
 local jpeg = {}
 
-local HUFFMAN_MODULE = require(script.HuffmanTable)
-local BITSTREAM_MODULE = require(script.BitStream)
+local HUFFMAN_MODULE = loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaconGamming/Image-Reader-Roblox/refs/heads/main/JPEG/HuffmanTable.lua"))
+local BITSTREAM_MODULE = loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaconGamming/Image-Reader-Roblox/refs/heads/main/JPEG/BitStream.lua"))
 
 local RUN_SERVICE = game:GetService("RunService")
 
