@@ -5,36 +5,55 @@ local PNG =  loadstring(game:HttpGet("https://raw.githubusercontent.com/HairBaco
 
 local RUN_SERVICE = game:GetService("RunService")
 
---[[ data include:
-	Width:int
-	Height:int
-	Data[x][y]:color
-	compressionLevel:int
-]]
+-- [OPTIMIZED] Hàm kiểm tra thời gian thông minh
+local function SmartYield(startTime)
+	-- Giảm ngưỡng xuống 0.004s (4ms) để game có thời gian render mượt mà (60 FPS cần ~16ms/frame)
+	-- Nếu để 0.015s như cũ sẽ chiếm hết tài nguyên frame gây lag
+	if os.clock() - startTime > 0.004 then
+		RUN_SERVICE.Heartbeat:Wait()
+		return os.clock()
+	end
+	return startTime
+end
 
 function pixels:BufferToPixels(buffer)
-	local data = JPEG.new(buffer) or PNG.new(buffer)
+	local success, data = pcall(function()
+		return JPEG.new(buffer) or PNG.new(buffer)
+	end)
+
+	if not success or not data then
+		warn("Failed to decode image buffer.")
+		return nil
+	end
+
 	local datapixels = data["ImageData"]
+	local clockStart = os.clock()
+
 	if not datapixels then
 		datapixels = {}
-		local i = 0
-		for x = 1,data.Width,1 do
+		for x = 1, data.Width do
 			datapixels[x] = datapixels[x] or {}
-			for y = 1,data.Height,1 do
-				local c,a = PNG:GetPixel(data,x,y)
-				datapixels[x][y] = {c.R*255,c.G*255,c.B*255,a}
-				i+=1
-				if i % 2000 == 0 then
-					RUN_SERVICE.Stepped:Wait()
+			
+			-- Kiểm tra thời gian ở vòng lặp ngoài để tối ưu
+			clockStart = SmartYield(clockStart)
+			
+			for y = 1, data.Height do
+				local c, a = PNG:GetPixel(data, x, y)
+				datapixels[x][y] = {c.R*255, c.G*255, c.B*255, a}
+				
+				-- [OPTIMIZED] Chỉ kiểm tra mỗi 50 pixel để giảm overhead của việc gọi os.clock() liên tục
+				if y % 50 == 0 then
+					clockStart = SmartYield(clockStart)
 				end
 			end
 		end
 	end
+
 	return {
-		["Width"]=data.Width,
-		["Height"]=data.Height,
-		["Data"]=datapixels,
-		["compressionLevel"]=1
+		["Width"] = data.Width,
+		["Height"] = data.Height,
+		["Data"] = datapixels,
+		["compressionLevel"] = 1
 	}
 end
 
@@ -44,36 +63,38 @@ function pixels.compress(data)
 	end
 
 	local compressedImage = {}
-	-- compressedImage sẽ chứa: { {x, y, sizeX, sizeY, r, g, b, a}, ... }
+	local clockStart = os.clock()
+
+	local visited = {}
+	for x = 1, data.Width do visited[x] = {} end
 
 	for x = 1, data.Width do
+		-- Kiểm tra thời gian ở vòng lặp ngoài
+		clockStart = SmartYield(clockStart)
+		
 		for y = 1, data.Height do
+			-- [OPTIMIZED] Kiểm tra visited nhanh gọn
+			if visited[x][y] then 
+				continue
+			end
+
 			local pixel = data.Data[x][y]
 
-			-- Index 5 dùng để đánh dấu pixel đã được gộp hay chưa
-			if pixel[5] == true then 
-				continue
-			end
-
-			-- Nếu alpha = 0 (trong suốt) thì bỏ qua luôn
 			if pixel[4] == 0 then
-				pixel[5] = true
+				visited[x][y] = true
 				continue
 			end
 
-			-- Bắt đầu thuật toán loang (Greedy Meshing)
 			local rangeX = 0
 			local rangeY = 0
 			local tryX = 0
 			local tryY = 0
 			local stop = false
 
-			-- Giới hạn loop để tránh treo máy quá lâu (40 block tối đa)
 			for i = 1, 100 do
 				local startA = 0
 				local startB = 0
 
-				-- Mở rộng vùng chọn
 				if tryX >= tryY then
 					startB = tryY
 					tryY = tryY + 1
@@ -82,7 +103,6 @@ function pixels.compress(data)
 					tryX = tryX + 1
 				end
 
-				-- Kiểm tra biên ảnh
 				if x + tryX > data.Width or y + tryY > data.Height then
 					break
 				end
@@ -92,22 +112,24 @@ function pixels.compress(data)
 
 					for b = startB, tryY do
 						if a == 0 and b == 0 then continue end
-
-						local near = data.Data[x + a][y + b]
-
-						-- Nếu pixel bên cạnh đã được xử lý hoặc trong suốt
-						if near[5] == true or near[4] == 0 then
+						
+						if visited[x + a] and visited[x + a][y + b] then
 							stop = true
 							break
 						end
 
-						-- So sánh màu sắc
+						local near = data.Data[x + a][y + b]
+
+						if near[4] == 0 then
+							stop = true
+							break
+						end
+
 						local distance = COLOR.GetDeltaE(
 							{ pixel[1], pixel[2], pixel[3] },
 							{ near[1], near[2], near[3] }
 						)
 
-						-- Nếu màu khác quá xa -> Dừng mở rộng
 						if distance > data.compressionLevel then
 							stop = true
 							break
@@ -116,39 +138,36 @@ function pixels.compress(data)
 				end
 
 				if stop then break end
-
 				rangeX = tryX
 				rangeY = tryY
 			end
 
-			-- Đánh dấu các pixel trong vùng vừa gộp là "đã xử lý"
 			for a = 0, rangeX do
 				for b = 0, rangeY do
 					local nX = x + a
 					local nY = y + b
 					if nX <= data.Width and nY <= data.Height then
-						data.Data[nX][nY][5] = true
+						visited[nX][nY] = true
 					end
 				end
 			end
 
-			-- Lưu thông tin block đã nén vào bảng kết quả
 			table.insert(
 				compressedImage,
 				{
-					x, y,               -- Vị trí gốc
-					rangeX + 1, rangeY + 1, -- Kích thước (Size X, Size Y)
-					pixel[1], pixel[2], pixel[3], pixel[4] -- Màu sắc (R, G, B, A)
+					x, y,
+					rangeX + 1, rangeY + 1,
+					pixel[1], pixel[2], pixel[3], pixel[4]
 				}
 			)
-		end
-
-		if x % 20 == 0 then
-			RUN_SERVICE.Heartbeat:Wait()
+			
+			-- [OPTIMIZED] Check định kỳ trong vòng lặp nặng này
+			if #compressedImage % 50 == 0 then
+				clockStart = SmartYield(clockStart)
+			end
 		end
 	end
 
-	-- TRẢ VỀ DATA ĐÃ NÉN TRỰC TIẾP
 	return compressedImage
 end
 
